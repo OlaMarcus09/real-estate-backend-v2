@@ -132,9 +132,8 @@ initDB();
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'Real Estate API WITH SAMPLE DATA',
-    timestamp: new Date().toISOString(),
-    data: 'Sample projects, workers, vendors, and inventory included'
+    message: 'Real Estate API WITH ALL ENDPOINTS',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -286,6 +285,37 @@ app.post('/api/vendors', async (req, res) => {
   }
 });
 
+app.put('/api/vendors/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, category, contact, rating } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE vendors SET name=$1, category=$2, contact=$3, rating=$4 WHERE id=$5 RETURNING *',
+      [name, category, contact, rating, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Vendor not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// VENDOR DELETE ENDPOINT - ADDED
+app.delete('/api/vendors/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM vendors WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Vendor not found' });
+    }
+    res.json({ message: 'Vendor deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // INVENTORY ENDPOINTS
 app.get('/api/inventory', async (req, res) => {
   try {
@@ -337,7 +367,6 @@ app.delete('/api/inventory/:id', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 REAL ESTATE API WITH SAMPLE DATA running on port ${PORT}`);
-  console.log(`✅ Sample projects, workers, vendors, and inventory included`);
-  console.log(`💰 All prices in Nigerian Naira (₦)`);
+  console.log(`🚀 REAL ESTATE API WITH ALL ENDPOINTS running on port ${PORT}`);
+  console.log(`✅ All CRUD operations working: Projects, Workers, Vendors, Inventory`);
 });
