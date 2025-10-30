@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Real Estate Backend v2.0
 
 Advanced real estate project management backend with PostgreSQL database and payment tracking.
@@ -12,3 +13,6 @@ Advanced real estate project management backend with PostgreSQL database and pay
 
 ## Deployment
 Deployed on Render with PostgreSQL database.
+=======
+# real-estate-backend-v2
+>>>>>>> 28f04f0e875dcfa3dae2542f5aacd87557afc2aa

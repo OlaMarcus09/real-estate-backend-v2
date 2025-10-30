@@ -5,29 +5,25 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: { rejectUnauthorized: false }
 });
 
-// Initialize database tables
+// Initialize database with sample data
 const initDB = async () => {
   const client = await pool.connect();
   try {
+    // Create tables
     await client.query(`
       CREATE TABLE IF NOT EXISTS projects (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
-        location VARCHAR(255),
-        units INTEGER,
-        status VARCHAR(50) DEFAULT 'Planning',
         budget DECIMAL(15,2),
-        spent DECIMAL(15,2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'Planning',
         start_date DATE,
         progress_percent INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -46,9 +42,9 @@ const initDB = async () => {
 
       CREATE TABLE IF NOT EXISTS worker_payments (
         id SERIAL PRIMARY KEY,
-        worker_id INTEGER REFERENCES workers(id) ON DELETE CASCADE,
-        amount DECIMAL(10,2) NOT NULL,
-        payment_date DATE NOT NULL,
+        worker_id INTEGER,
+        amount DECIMAL(10,2),
+        payment_date DATE,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -60,16 +56,6 @@ const initDB = async () => {
         contact VARCHAR(255),
         rating INTEGER DEFAULT 5,
         total_paid DECIMAL(15,2) DEFAULT 0,
-        last_payment_date DATE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS vendor_payments (
-        id SERIAL PRIMARY KEY,
-        vendor_id INTEGER REFERENCES vendors(id) ON DELETE CASCADE,
-        amount DECIMAL(10,2) NOT NULL,
-        payment_date DATE NOT NULL,
-        description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -83,9 +69,58 @@ const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log('✅ Database tables initialized successfully');
+
+    // Check if we need sample data
+    const projectsCount = await client.query('SELECT COUNT(*) FROM projects');
+    const workersCount = await client.query('SELECT COUNT(*) FROM workers');
+    const vendorsCount = await client.query('SELECT COUNT(*) FROM vendors');
+    const inventoryCount = await client.query('SELECT COUNT(*) FROM inventory');
+
+    if (parseInt(projectsCount.rows[0].count) === 0) {
+      console.log('📊 Adding sample projects...');
+      await client.query(`
+        INSERT INTO projects (name, budget, status, progress_percent) VALUES 
+        ('Lagos Luxury Apartments', 25000000, 'Active', 35),
+        ('Abuja Commercial Complex', 50000000, 'Planning', 0),
+        ('Port Harcourt Residential', 15000000, 'Active', 65)
+      `);
+    }
+
+    if (parseInt(workersCount.rows[0].count) === 0) {
+      console.log('👷 Adding sample workers...');
+      await client.query(`
+        INSERT INTO workers (name, role, hourly_rate, contact) VALUES 
+        ('Chinedu Okoro', 'Site Manager', 8500, '08031234567'),
+        ('Amina Bello', 'Architect', 6500, 'amina@construction.com'),
+        ('Emeka Nwosu', 'Civil Engineer', 7200, '08039876543')
+      `);
+    }
+
+    if (parseInt(vendorsCount.rows[0].count) === 0) {
+      console.log('🏢 Adding sample vendors...');
+      await client.query(`
+        INSERT INTO vendors (name, category, contact, rating) VALUES 
+        ('Dangote Cement', 'Materials', 'orders@dangote.com', 5),
+        ('Julius Berger', 'Contractors', 'info@juliusberger.com', 4),
+        ('CCECC Nigeria', 'Engineering', 'contact@ccecc.com', 4)
+      `);
+    }
+
+    if (parseInt(inventoryCount.rows[0].count) === 0) {
+      console.log('📦 Adding sample inventory...');
+      await client.query(`
+        INSERT INTO inventory (name, category, quantity, unit_price, min_stock) VALUES 
+        ('Portland Cement', 'Materials', 500, 4500, 100),
+        ('Steel Reinforcement', 'Materials', 200, 8500, 50),
+        ('Electrical Wires', 'Electrical', 150, 3200, 30),
+        ('PVC Pipes', 'Plumbing', 300, 2800, 40),
+        ('Paint (20L)', 'Finishing', 25, 18500, 10)
+      `);
+    }
+
+    console.log('✅ Database initialized with sample data');
   } catch (err) {
-    console.error('❌ Error initializing database:', err);
+    console.error('❌ Database initialization error:', err);
   } finally {
     client.release();
   }
@@ -97,11 +132,9 @@ initDB();
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'Real Estate API with PostgreSQL & Payment Tracking',
-    currency: 'Nigerian Naira (₦)',
-    version: '2.0.0',
-    database: 'PostgreSQL',
-    features: ['Projects', 'Workers', 'Vendors', 'Inventory', 'Payment Tracking']
+    message: 'Real Estate API WITH SAMPLE DATA',
+    timestamp: new Date().toISOString(),
+    data: 'Sample projects, workers, vendors, and inventory included'
   });
 });
 
@@ -116,11 +149,11 @@ app.get('/api/projects', async (req, res) => {
 });
 
 app.post('/api/projects', async (req, res) => {
-  const { name, budget, start_date, status, location } = req.body;
+  const { name, budget, start_date, status } = req.body;
   try {
     const result = await pool.query(
-      'INSERT INTO projects (name, budget, start_date, status, location) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [name, budget, start_date, status, location]
+      'INSERT INTO projects (name, budget, start_date, status) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, budget, start_date, status]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -130,12 +163,15 @@ app.post('/api/projects', async (req, res) => {
 
 app.put('/api/projects/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, budget, spent, start_date, status, progress_percent } = req.body;
+  const { name, budget, status, progress_percent } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE projects SET name=$1, budget=$2, spent=$3, start_date=$4, status=$5, progress_percent=$6 WHERE id=$7 RETURNING *',
-      [name, budget, spent, start_date, status, progress_percent, id]
+      'UPDATE projects SET name=$1, budget=$2, status=$3, progress_percent=$4 WHERE id=$5 RETURNING *',
+      [name, budget, status, progress_percent, id]
     );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -183,6 +219,9 @@ app.put('/api/workers/:id', async (req, res) => {
       'UPDATE workers SET name=$1, role=$2, hourly_rate=$3, contact=$4 WHERE id=$5 RETURNING *',
       [name, role, hourly_rate, contact, id]
     );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Worker not found' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -199,39 +238,23 @@ app.delete('/api/workers/:id', async (req, res) => {
   }
 });
 
-// WORKER PAYMENT ENDPOINTS
-app.get('/api/workers/:id/payments', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      'SELECT * FROM worker_payments WHERE worker_id = $1 ORDER BY payment_date DESC',
-      [id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
+// WORKER PAYMENTS
 app.post('/api/workers/:id/payments', async (req, res) => {
   const { id } = req.params;
   const { amount, payment_date, description } = req.body;
   try {
-    // Start transaction
     await pool.query('BEGIN');
-
-    // Add payment record
+    
     const paymentResult = await pool.query(
       'INSERT INTO worker_payments (worker_id, amount, payment_date, description) VALUES ($1, $2, $3, $4) RETURNING *',
       [id, amount, payment_date, description]
     );
-
-    // Update worker's total paid and last payment date
+    
     await pool.query(
       'UPDATE workers SET total_paid = COALESCE(total_paid, 0) + $1, last_payment_date = $2 WHERE id = $3',
       [amount, payment_date, id]
     );
-
+    
     await pool.query('COMMIT');
     res.json(paymentResult.rows[0]);
   } catch (err) {
@@ -259,71 +282,6 @@ app.post('/api/vendors', async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/vendors/:id', async (req, res) => {
-  const { id } = req.params;
-  const { name, category, contact, rating } = req.body;
-  try {
-    const result = await pool.query(
-      'UPDATE vendors SET name=$1, category=$2, contact=$3, rating=$4 WHERE id=$5 RETURNING *',
-      [name, category, contact, rating, id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/vendors/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    await pool.query('DELETE FROM vendors WHERE id=$1', [id]);
-    res.json({ message: 'Vendor deleted successfully' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// VENDOR PAYMENT ENDPOINTS
-app.get('/api/vendors/:id/payments', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      'SELECT * FROM vendor_payments WHERE vendor_id = $1 ORDER BY payment_date DESC',
-      [id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/vendors/:id/payments', async (req, res) => {
-  const { id } = req.params;
-  const { amount, payment_date, description } = req.body;
-  try {
-    // Start transaction
-    await pool.query('BEGIN');
-
-    // Add payment record
-    const paymentResult = await pool.query(
-      'INSERT INTO vendor_payments (vendor_id, amount, payment_date, description) VALUES ($1, $2, $3, $4) RETURNING *',
-      [id, amount, payment_date, description]
-    );
-
-    // Update vendor's total paid and last payment date
-    await pool.query(
-      'UPDATE vendors SET total_paid = COALESCE(total_paid, 0) + $1, last_payment_date = $2 WHERE id = $3',
-      [amount, payment_date, id]
-    );
-
-    await pool.query('COMMIT');
-    res.json(paymentResult.rows[0]);
-  } catch (err) {
-    await pool.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
@@ -359,6 +317,9 @@ app.put('/api/inventory/:id', async (req, res) => {
       'UPDATE inventory SET name=$1, category=$2, quantity=$3, unit_price=$4, min_stock=$5 WHERE id=$6 RETURNING *',
       [name, category, quantity, unit_price, min_stock, id]
     );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -375,38 +336,8 @@ app.delete('/api/inventory/:id', async (req, res) => {
   }
 });
 
-// ANALYTICS ENDPOINT
-app.get('/api/analytics', async (req, res) => {
-  try {
-    const projectsCount = await pool.query('SELECT COUNT(*) FROM projects');
-    const workersCount = await pool.query('SELECT COUNT(*) FROM workers');
-    const vendorsCount = await pool.query('SELECT COUNT(*) FROM vendors');
-    const inventoryCount = await pool.query('SELECT COUNT(*) FROM inventory');
-    const totalBudget = await pool.query('SELECT COALESCE(SUM(budget), 0) as total FROM projects');
-    const totalSpent = await pool.query('SELECT COALESCE(SUM(spent), 0) as total FROM projects');
-    const totalWorkerPayments = await pool.query('SELECT COALESCE(SUM(total_paid), 0) as total FROM workers');
-    const totalVendorPayments = await pool.query('SELECT COALESCE(SUM(total_paid), 0) as total FROM vendors');
-
-    res.json({
-      projects: parseInt(projectsCount.rows[0].count),
-      workers: parseInt(workersCount.rows[0].count),
-      vendors: parseInt(vendorsCount.rows[0].count),
-      inventory: parseInt(inventoryCount.rows[0].count),
-      total_budget: parseFloat(totalBudget.rows[0].total),
-      total_spent: parseFloat(totalSpent.rows[0].total),
-      total_worker_payments: parseFloat(totalWorkerPayments.rows[0].total),
-      total_vendor_payments: parseFloat(totalVendorPayments.rows[0].total),
-      currency: 'NGN'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.listen(PORT, () => {
-  console.log(`🚀 Real Estate API v2.0 running on port ${PORT}`);
-  console.log(`💰 Currency: Nigerian Naira (₦)`);
-  console.log(`🗄️  Database: PostgreSQL`);
-  console.log(`📊 Features: Projects, Workers, Vendors, Inventory, Payment Tracking`);
-  console.log(`🌍 Health: http://localhost:${PORT}/api/health`);
+  console.log(`🚀 REAL ESTATE API WITH SAMPLE DATA running on port ${PORT}`);
+  console.log(`✅ Sample projects, workers, vendors, and inventory included`);
+  console.log(`💰 All prices in Nigerian Naira (₦)`);
 });
